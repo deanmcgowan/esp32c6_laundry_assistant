@@ -1,10 +1,10 @@
 {
-    "version": "0.1.0",
+    "version": "0.1.1",
     "files": [
       {
         "path": "app_main.py",
-        "url": "https://deanmcgowan.github.io/esp32c6_laundry_assistant/releases/v0.1.0/app_main.py",
-        "sha256": "4a9c9a5ae2496c337d73e50002ff43ad1c063ead62c42745316a4c5975bcbd25"
+        "url": "https://deanmcgowan.github.io/esp32c6_laundry_assistant/releases/v0.1.1/app_main.py",
+        "sha256": "027c032aab5379ff19a48a4d84f3f6c380ff92397fe40da4b79607d98c3cd6ae"
       }
     ]
   }
