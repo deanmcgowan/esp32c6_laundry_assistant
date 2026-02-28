@@ -1,9 +1,10 @@
 # updater.py — ESP32_GENERIC_C6 / MicroPython v1.27.0
+#
 # OTA updater with:
-# - manifest-driven file list
-# - SHA-256 integrity check (MicroPython-compatible)
-# - staging dir (/next) then swap to (/app), keep (/app_prev)
-# - rollback after repeated boot failures
+# - Manifest-driven file list
+# - SHA-256 integrity checks (MicroPython-safe; no .hexdigest())
+# - Staging directory (/next) then swap to (/app); keep (/app_prev)
+# - Rollback after repeated boot failures
 
 import os
 import json
@@ -11,16 +12,16 @@ import time
 import machine
 import network
 import ubinascii
-
 import urequests as requests
 
 try:
     import uhashlib as hashlib  # MicroPython
 except ImportError:
-    import hashlib              # (fallback)
+    import hashlib  # Fallback (unlikely on device)
 
 
 STATE_PATH = "/state.json"
+CHUNK_SIZE = 1024
 
 
 def _load_json(path, default):
@@ -61,7 +62,7 @@ def _rmtree(path):
     except OSError:
         return
 
-    # Directory?
+    # Try directory delete
     try:
         for name, typ, *_ in os.ilistdir(path):
             p = path.rstrip("/") + "/" + name
@@ -75,7 +76,7 @@ def _rmtree(path):
         os.rmdir(path)
         return
     except OSError:
-        # Not a directory -> file
+        # Fallback: file
         try:
             os.remove(path)
         except OSError:
@@ -114,8 +115,8 @@ def _http_get_json(url):
 
 def _sha256_stream_to_file(resp, dest_path):
     """
-    Stream response into file while calculating SHA-256.
-    Returns lowercase hex string (MicroPython-safe).
+    Stream response into a file while calculating SHA-256.
+    Returns lowercase hex string.
     """
     h = hashlib.sha256()
 
@@ -124,17 +125,16 @@ def _sha256_stream_to_file(resp, dest_path):
         _mkdirs(parent)
 
     raw = getattr(resp, "raw", None)
-
     with open(dest_path, "wb") as f:
         if raw and hasattr(raw, "read"):
             while True:
-                chunk = raw.read(1024)
+                chunk = raw.read(CHUNK_SIZE)
                 if not chunk:
                     break
                 h.update(chunk)
                 f.write(chunk)
         else:
-            # Fallback (may use more RAM depending on implementation)
+            # Fallback: may consume RAM depending on implementation
             data = resp.content
             h.update(data)
             f.write(data)
@@ -142,33 +142,54 @@ def _sha256_stream_to_file(resp, dest_path):
     return ubinascii.hexlify(h.digest()).decode().lower()
 
 
-def _http_download(url, dest_path, expected_sha256):
-    r = requests.get(url)
-    try:
-        if r.status_code != 200:
-            raise RuntimeError("HTTP %d for %s" % (r.status_code, url))
-        got = _sha256_stream_to_file(r, dest_path)
-    finally:
-        try:
-            r.close()
-        except Exception:
-            pass
+def _download_with_hash(url, dest_path, expected_sha256, retries=2):
+    expected = (expected_sha256 or "").strip().lower()
 
-    if expected_sha256:
-        if got != expected_sha256.strip().lower():
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            r = requests.get(url)
+            try:
+                if r.status_code != 200:
+                    raise RuntimeError("HTTP %d for %s" % (r.status_code, url))
+                got = _sha256_stream_to_file(r, dest_path)
+            finally:
+                try:
+                    r.close()
+                except Exception:
+                    pass
+
+            if expected and got != expected:
+                try:
+                    os.remove(dest_path)
+                except OSError:
+                    pass
+                raise RuntimeError("SHA256 mismatch for %s" % dest_path)
+
+            return  # success
+
+        except Exception as e:
+            last_err = e
+            # Clean partial file before retry
             try:
                 os.remove(dest_path)
             except OSError:
                 pass
-            raise RuntimeError("SHA256 mismatch for %s" % dest_path)
+            # Small backoff
+            time.sleep(0.5 + 0.5 * attempt)
+
+    raise last_err
 
 
 def load_state():
-    return _load_json(STATE_PATH, {
-        "installed_version": "0.0.0",
-        "boot_failures": 0,
-        "pending_version": None
-    })
+    return _load_json(
+        STATE_PATH,
+        {
+            "installed_version": "0.0.0",
+            "boot_failures": 0,
+            "pending_version": None,
+        },
+    )
 
 
 def save_state(st):
@@ -212,6 +233,9 @@ def apply_update(manifest):
     new_ver = manifest["version"]
     files = manifest.get("files", [])
 
+    if not files:
+        raise RuntimeError("Manifest has no files")
+
     # Prepare staging area
     _rmtree("/next")
     try:
@@ -219,13 +243,13 @@ def apply_update(manifest):
     except OSError:
         pass
 
-    # Download all files to /next/<path>
+    # Download all files into /next/<path>
     for item in files:
         rel = item["path"].lstrip("/")
         url = item["url"]
         sha = item.get("sha256", "")
         dest = "/next/" + rel
-        _http_download(url, dest, sha)
+        _download_with_hash(url, dest, sha, retries=2)
 
     # Swap: keep previous
     _rmtree("/app_prev")
