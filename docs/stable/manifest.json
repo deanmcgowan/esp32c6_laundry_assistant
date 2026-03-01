@@ -1,47 +1,47 @@
 {
-  "version": "0.4.0",
+  "version": "0.4.1",
   "files": [
     {
       "path": "app_main.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.0/app_main.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.1/app_main.py",
       "sha256": "..."
     },
     {
       "path": "web/server.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.0/web/server.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.1/web/server.py",
       "sha256": "..."
     },
 
     {
       "path": "lib/timeutil.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.0/lib/timeutil.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.1/lib/timeutil.py",
       "sha256": "..."
     },
 
     {
       "path": "lib/spotprice/__init__.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.0/lib/spotprice/__init__.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.1/lib/spotprice/__init__.py",
       "sha256": "..."
     },
     {
       "path": "lib/spotprice/elprisetjustnu.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.0/lib/spotprice/elprisetjustnu.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.1/lib/spotprice/elprisetjustnu.py",
       "sha256": "..."
     },
 
     {
       "path": "lib/ngenic/__init__.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.0/lib/ngenic/__init__.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.1/lib/ngenic/__init__.py",
       "sha256": "..."
     },
     {
       "path": "lib/ngenic/ngenic_http11.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.0/lib/ngenic/ngenic_http11.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.1/lib/ngenic/ngenic_http11.py",
       "sha256": "..."
     },
     {
       "path": "lib/ngenic/ngenic_client.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.0/lib/ngenic/ngenic_client.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.4.1/lib/ngenic/ngenic_client.py",
       "sha256": "..."
     }
   ]
