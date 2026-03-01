@@ -3,6 +3,7 @@ import sys
 import machine
 
 import updater
+from status_led import StatusLED
 
 
 def _load_secrets():
@@ -17,7 +18,10 @@ def _boot_button_held():
     return pin.value() == 0
 
 
-# Safe window so you can interrupt from Thonny (Ctrl+C) if needed.
+led = StatusLED(pin=8)
+updater.set_status_led(led)
+
+# Safe window so you can interrupt from Thonny if needed.
 time.sleep(2)
 
 # Roll back automatically if we’re crash-looping.
@@ -27,17 +31,27 @@ secrets = _load_secrets()
 
 # Recovery mode: hold BOOT during reset/boot to stop OTA + app start.
 if _boot_button_held():
+    # Optional: indicate recovery with a dim blue
+    led.solid((0, 0, 10))
     print("BOOT held: recovery mode. Not updating, not starting app.")
     while True:
         time.sleep(1)
 
-# OTA check (optional)
+# Blink red while we attempt OTA (connect + fetch + download)
+led.blink((10, 0, 0), interval_ms=250)
+
 if secrets.get("check_updates_on_boot", True):
     try:
         updater.connect_wifi(secrets["wifi_ssid"], secrets["wifi_password"])
         updater.check_and_update(secrets["manifest_url"])
     except Exception as e:
+        # Optional: solid red if OTA failed (still boots local app)
+        led.solid((10, 0, 0))
         print("OTA check skipped/failed:", repr(e))
+
+# If we’re here, we’re about to start the app.
+# Turn LED off; the app will set it to green once fully started.
+led.off()
 
 # Count this boot attempt; the app should clear this via updater.mark_boot_success().
 st = updater.load_state()
