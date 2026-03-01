@@ -49,6 +49,43 @@ def stockholm_hms(utc_epoch):
     t = utc_to_stockholm_tuple(utc_epoch)
     return "%02d:%02d:%02d" % (t[3], t[4], t[5])
 
+def add_days_ymd(ymd, days=1):
+    """
+    Add days to a YYYY-MM-DD date string (calendar arithmetic).
+    Only supports positive days (we only need +1).
+    """
+    y = int(ymd[0:4])
+    m = int(ymd[5:7])
+    d = int(ymd[8:10])
+
+    n = int(days)
+    if n < 0:
+        raise ValueError("add_days_ymd only supports positive days")
+
+    while n > 0:
+        dim = _days_in_month(y, m)
+        if d < dim:
+            d += 1
+        else:
+            d = 1
+            if m < 12:
+                m += 1
+            else:
+                m = 1
+                y += 1
+        n -= 1
+
+    return "%04d-%02d-%02d" % (y, m, d)
+
+def stockholm_today_tomorrow_ymd(utc_epoch):
+    """
+    Returns (today_ymd, tomorrow_ymd) in Europe/Stockholm local calendar terms.
+    This avoids the 'now + 36h' bug late in the day.
+    """
+    today = stockholm_ymd(utc_epoch)
+    tomorrow = add_days_ymd(today, 1)
+    return today, tomorrow
+
 def parse_iso8601_to_utc_epoch(s):
     """
     Parses:

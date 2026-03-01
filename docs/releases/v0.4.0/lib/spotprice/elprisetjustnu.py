@@ -4,7 +4,11 @@ import os
 
 import urequests
 
-from timeutil import stockholm_ymd, utc_to_stockholm_tuple, parse_iso8601_to_utc_epoch
+from timeutil import (
+    utc_to_stockholm_tuple,
+    stockholm_today_tomorrow_ymd,
+    parse_iso8601_to_utc_epoch,
+)
 
 
 class SpotPriceClient:
@@ -13,6 +17,11 @@ class SpotPriceClient:
       - today (Europe/Stockholm date)
       - tomorrow (when available)
     Cache is stored outside /app so it survives OTA swaps: /data/spotprices_SE3.json
+
+    Behaviour:
+      - today is always fetched if missing
+      - tomorrow is only attempted after ~13:05 local time
+      - cache is trimmed to (today, tomorrow) every time, so it never grows unbounded
     """
 
     def __init__(self, area="SE3", cache_path=None):
@@ -95,23 +104,15 @@ class SpotPriceClient:
             r.close()
 
     def refresh_if_due(self, utc_epoch=None):
-        """
-        Call frequently; it will only fetch when:
-          - today is missing, or
-          - after ~13:05 local time when tomorrow might be available, and tomorrow is missing,
-          - and we're not inside backoff.
-        """
         now = utc_epoch if utc_epoch is not None else time.time()
 
         # Backoff window
         if now < self._cache.get("next_fetch_epoch", 0):
             return self.get_cached()
 
-        today = stockholm_ymd(now)
-        # add 36h to safely cross date boundary even near DST
-        tomorrow = stockholm_ymd(now + 36 * 3600)
+        today, tomorrow = stockholm_today_tomorrow_ymd(now)
 
-        # Trim cache to just today/tomorrow (prevents growth)
+        # Trim cache aggressively so it never grows
         self._trim_days(today, tomorrow)
 
         need_today = today not in self._cache["days"]
@@ -123,34 +124,46 @@ class SpotPriceClient:
         if not need_today and not need_tomorrow:
             return self.get_cached()
 
+        today_ok = False
+
         try:
             if need_today:
                 self._cache["days"][today] = self._fetch_day(today)
-
-            if need_tomorrow:
-                self._cache["days"][tomorrow] = self._fetch_day(tomorrow)
-
-            self._cache["fetched_epoch"] = now
-            self._cache["last_error"] = None
-            self._cache["next_fetch_epoch"] = 0
-
-            # Trim again and save
-            self._trim_days(today, tomorrow)
-            self._save_cache()
-            return self.get_cached()
-
+            today_ok = True
         except Exception as e:
-            self._cache["last_error"] = repr(e)
-
-            # If tomorrow isn't published yet, don't hammer the server.
-            # Retry in 30 minutes.
-            self._cache["next_fetch_epoch"] = now + 30 * 60
-
-            # Still trim and save (so the cache file stays small)
+            # If today fails, that's a real problem.
+            self._cache["last_error"] = "today fetch failed: " + repr(e)
+            self._cache["next_fetch_epoch"] = now + 10 * 60  # retry in 10 minutes
             self._trim_days(today, tomorrow)
             try:
                 self._save_cache()
             except Exception:
                 pass
-
             return self.get_cached()
+
+        # Tomorrow is optional; a 404 should not poison the whole cache.
+        if need_tomorrow:
+            try:
+                self._cache["days"][tomorrow] = self._fetch_day(tomorrow)
+            except Exception as e:
+                self._cache["last_error"] = "tomorrow fetch failed: " + repr(e)
+                self._cache["next_fetch_epoch"] = now + 30 * 60  # retry tomorrow in 30 minutes
+            else:
+                # Tomorrow fetched OK
+                self._cache["last_error"] = None
+                self._cache["next_fetch_epoch"] = 0
+        else:
+            # Nothing to do for tomorrow right now
+            self._cache["last_error"] = None
+            self._cache["next_fetch_epoch"] = 0
+
+        if today_ok:
+            self._cache["fetched_epoch"] = now
+
+        self._trim_days(today, tomorrow)
+        try:
+            self._save_cache()
+        except Exception:
+            pass
+
+        return self.get_cached()
