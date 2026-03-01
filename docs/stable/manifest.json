@@ -1,25 +1,30 @@
 {
-  "version": "0.2.2",
+  "version": "0.3.0",
   "files": [
     {
       "path": "app_main.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.2.2/app_main.py",
-      "sha256": "c802bf50d82d5258f7f93b9f37af769cd80af09f82a85f3f24539a92dd65ad85"
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.3.0/app_main.py",
+      "sha256": "27d747b290a133b1cd2ad32fe5bde7a85e2fdeeeca1b89fed00914fdb8a95679"
     },
     {
       "path": "lib/ngenic/__init__.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.2.2/lib/ngenic/__init__.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.3.0/lib/ngenic/__init__.py",
       "sha256": "195d29d73a0bfa147f2d8f7ca42cacfc01652faef82d80ab602e526a4db06545"
     },
     {
       "path": "lib/ngenic/ngenic_client.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.2.2/lib/ngenic/ngenic_client.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.3.0/lib/ngenic/ngenic_client.py",
       "sha256": "fdb4d148535e68d2aaac4d0c6bb856b0db714087c84bfa5d514c3f3837731803"
     },
     {
       "path": "lib/ngenic/ngenic_http11.py",
-      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.2.2/lib/ngenic/ngenic_http11.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.3.0/lib/ngenic/ngenic_http11.py",
       "sha256": "0b6508da5d4305cf1bcd2867fd39c09d5103713f72af245089d49ed5288f0612"
+    },
+    {
+      "path": "web/server.py",
+      "url": "https://raw.githubusercontent.com/deanmcgowan/esp32c6_laundry_assistant/main/docs/releases/v0.3.0/web/server.py",
+      "sha256": "d7bbdb9c00ed09b792197910a68e3d0e951e552c08e3c9f03e9028e39d81e50e"
     }
   ]
 }
