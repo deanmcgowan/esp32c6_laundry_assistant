@@ -1,0 +1,471 @@
+import socket
+import json
+
+
+def _http_response(status_code, content_type, body_bytes):
+    reason = {
+        200: "OK",
+        400: "Bad Request",
+        404: "Not Found",
+        500: "Internal Server Error",
+    }.get(status_code, "OK")
+
+    hdr = (
+        "HTTP/1.1 {code} {reason}\r\n"
+        "Content-Type: {ct}\r\n"
+        "Content-Length: {n}\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).format(code=status_code, reason=reason, ct=content_type, n=len(body_bytes))
+
+    return hdr.encode("utf-8") + body_bytes
+
+
+def _split_path_query(path):
+    if not path:
+        return "/", ""
+    if "?" not in path:
+        return path, ""
+    a, b = path.split("?", 1)
+    return a or "/", b or ""
+
+
+def _parse_query(qs):
+    out = {}
+    if not qs:
+        return out
+    for p in qs.split("&"):
+        if not p:
+            continue
+        if "=" in p:
+            k, v = p.split("=", 1)
+        else:
+            k, v = p, ""
+        out[k] = v
+    return out
+
+
+def _html_index():
+    # Tabbed UI, low noise, robust refresh rates:
+    # - live power: 5s
+    # - prices/recommendations: 15m
+    # - PV / forecasts: 30-60m or on-demand
+    html = r"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32-C6 Energy Hub</title>
+  <style>
+    :root { --bg:#0b1220; --card:#121c33; --muted:#9fb0d0; --text:#e7eefc; --accent:#5aa2ff; --warn:#ffcc66; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--text); }
+    header { padding:14px 16px; border-bottom:1px solid rgba(255,255,255,0.08); }
+    header h1 { margin:0; font-size:16px; font-weight:600; }
+    header .sub { margin-top:4px; color:var(--muted); font-size:12px; }
+    nav { display:flex; gap:8px; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.08); }
+    nav button { background:transparent; color:var(--muted); border:1px solid rgba(255,255,255,0.12); padding:8px 10px; border-radius:10px; cursor:pointer; }
+    nav button.active { color:var(--text); border-color:rgba(90,162,255,0.8); box-shadow: 0 0 0 1px rgba(90,162,255,0.35) inset; }
+    main { padding:12px; max-width: 980px; margin: 0 auto; }
+    .grid { display:grid; grid-template-columns: repeat(12, 1fr); gap:10px; }
+    .card { grid-column: span 12; background:var(--card); border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:12px; }
+    @media (min-width: 760px) {
+      .card.half { grid-column: span 6; }
+      .card.third { grid-column: span 4; }
+    }
+    .kpi { display:flex; gap:10px; align-items: baseline; flex-wrap: wrap; }
+    .kpi .label { color:var(--muted); font-size:12px; }
+    .kpi .value { font-size:22px; font-weight:700; }
+    .kpi .unit { color:var(--muted); font-size:12px; margin-left:6px; }
+    .row { display:flex; justify-content: space-between; gap:12px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06); }
+    .row:last-child { border-bottom:0; }
+    .row .l { color:var(--muted); font-size:12px; }
+    .row .r { font-size:12px; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid rgba(255,255,255,0.12); color: var(--muted); }
+    .pill.ok { color: #a7ffb7; border-color: rgba(167,255,183,0.22); }
+    .pill.warn { color: var(--warn); border-color: rgba(255,204,102,0.25); }
+    table { width:100%; border-collapse: collapse; font-size:12px; }
+    th, td { text-align:left; padding:8px 6px; border-bottom:1px solid rgba(255,255,255,0.08); }
+    th { color:var(--muted); font-weight:600; }
+    .actions { display:flex; gap:8px; align-items:center; margin-top:8px; }
+    .actions button { background: rgba(90,162,255,0.15); border:1px solid rgba(90,162,255,0.35); color:var(--text); padding:7px 10px; border-radius:10px; cursor:pointer; }
+    .small { color:var(--muted); font-size:12px; }
+    .tab { display:none; }
+    .tab.active { display:block; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ESP32-C6 Energy Hub</h1>
+    <div class="sub">Live power updates every 5s. Prices & forecasts are cached and refreshed infrequently.</div>
+  </header>
+
+  <nav>
+    <button id="btn-energy" class="active" onclick="showTab('energy')">Energy</button>
+    <button id="btn-whiteware" onclick="showTab('whiteware')">Whiteware</button>
+    <button id="btn-forecast" onclick="showTab('forecast')">Forecast</button>
+  </nav>
+
+  <main>
+    <section id="tab-energy" class="tab active">
+      <div class="grid">
+        <div class="card third">
+          <div class="kpi">
+            <div class="label">Import</div>
+            <div class="value" id="imp">—</div><div class="unit">kW</div>
+          </div>
+          <div class="row"><div class="l">Export</div><div class="r"><span id="exp">—</span> kW</div></div>
+          <div class="row"><div class="l">Net</div><div class="r"><span id="net">—</span> kW</div></div>
+          <div class="row"><div class="l">Freshness</div><div class="r"><span id="ng-pill" class="pill">—</span></div></div>
+        </div>
+
+        <div class="card third">
+          <div class="kpi">
+            <div class="label">Spot price (SE3)</div>
+            <div class="value" id="spot">—</div><div class="unit">SEK/kWh</div>
+          </div>
+          <div class="row"><div class="l">Cached</div><div class="r"><span id="price-pill" class="pill">—</span></div></div>
+          <div class="row"><div class="l">Tomorrow</div><div class="r" id="tomorrow">—</div></div>
+          <div class="actions">
+            <button onclick="refreshPricesNow()">Refresh prices</button>
+          </div>
+          <div class="small">Prices refresh every ~15 minutes in the UI.</div>
+        </div>
+
+        <div class="card third">
+          <div class="kpi">
+            <div class="label">PV next 24h (est.)</div>
+            <div class="value" id="pv24">—</div><div class="unit">kWh</div>
+          </div>
+          <div class="row"><div class="l">Next hour</div><div class="r"><span id="pv1">—</span> kW</div></div>
+          <div class="row"><div class="l">Cached</div><div class="r"><span id="pv-pill" class="pill">—</span></div></div>
+          <div class="actions">
+            <button onclick="refreshPvNow()">Refresh PV</button>
+          </div>
+          <div class="small">Simple estimate based on tilted irradiance and a fixed loss factor.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-whiteware" class="tab">
+      <div class="card">
+        <div class="kpi">
+          <div class="label">Delayed start suggestions</div>
+          <div class="value">Whiteware</div>
+        </div>
+        <div class="small">Spot-price-only recommendations using default kWh assumptions.</div>
+        <div class="actions">
+          <button onclick="refreshRecoNow()">Refresh suggestions</button>
+          <span class="pill" id="reco-pill">—</span>
+        </div>
+        <div style="overflow:auto; margin-top:10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Appliance</th>
+                <th>Delay (min)</th>
+                <th>Start (local)</th>
+                <th>Avg now</th>
+                <th>Avg best</th>
+                <th>Save (SEK)</th>
+              </tr>
+            </thead>
+            <tbody id="reco-body">
+              <tr><td colspan="6" class="small">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-forecast" class="tab">
+      <div class="grid">
+        <div class="card half">
+          <div class="kpi">
+            <div class="label">Temperature (SMHI) next 24h</div>
+            <div class="value">Forecast</div>
+          </div>
+          <div class="actions">
+            <button onclick="refreshWeatherNow()">Refresh weather</button>
+            <span class="pill" id="wx-pill">—</span>
+          </div>
+          <div style="overflow:auto; margin-top:10px;">
+            <table>
+              <thead><tr><th>End</th><th>T (°C)</th><th>Wind (m/s)</th></tr></thead>
+              <tbody id="wx-body"><tr><td colspan="3" class="small">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card half">
+          <div class="kpi">
+            <div class="label">Solar (Open‑Meteo) next 24h</div>
+            <div class="value">Irradiance</div>
+          </div>
+          <div class="actions">
+            <button onclick="refreshSolarNow()">Refresh solar</button>
+            <span class="pill" id="sol-pill">—</span>
+          </div>
+          <div style="overflow:auto; margin-top:10px;">
+            <table>
+              <thead><tr><th>End</th><th>GTI (W/m²)</th><th>Cloud (%)</th></tr></thead>
+              <tbody id="sol-body"><tr><td colspan="3" class="small">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="small" style="margin-top:10px;">
+      Live power: 5s · Prices: 15m · Suggestions: 15m · PV: 30m
+    </div>
+  </main>
+
+<script>
+  let currentTab = 'energy';
+
+  function showTab(name) {
+    currentTab = name;
+    for (const t of ['energy','whiteware','forecast']) {
+      document.getElementById('tab-' + t).classList.toggle('active', t === name);
+      document.getElementById('btn-' + t).classList.toggle('active', t === name);
+    }
+    if (name === 'forecast') {
+      refreshWeatherNow();
+      refreshSolarNow();
+    }
+  }
+
+  function fmtNum(x, dp) {
+    if (x === null || x === undefined) return "—";
+    const n = Number(x);
+    if (Number.isNaN(n)) return "—";
+    return (dp === null || dp === undefined) ? String(n) : n.toFixed(dp);
+  }
+
+  function setText(id, txt) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = txt;
+  }
+
+  function setPill(id, state, text) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('ok');
+    el.classList.remove('warn');
+    if (state === 'ok') el.classList.add('ok');
+    if (state === 'warn') el.classList.add('warn');
+    el.textContent = text;
+  }
+
+  async function getJson(url, timeoutMs) {
+    timeoutMs = timeoutMs || 2500;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, {signal: ctrl.signal, cache: "no-store"});
+      if (!r.ok) return null;
+      return await r.json();
+    } catch (e) {
+      return null;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  function okEnvelope(env) {
+    return env && env.meta && env.data;
+  }
+
+  async function refreshStatusNow() {
+    const env = await getJson('/api/status', 1500);
+    if (!okEnvelope(env)) { setPill('ng-pill', 'warn', 'offline'); return; }
+    const ng = (env.data && env.data.ngenic) ? env.data.ngenic : {};
+    setText('imp', fmtNum(ng.import_kW, 2));
+    setText('exp', fmtNum(ng.export_kW, 2));
+    setText('net', fmtNum(ng.net_kW, 2));
+    const age = ng.age_s;
+    if (age === null || age === undefined) setPill('ng-pill', 'warn', 'unknown');
+    else if (age <= 120) setPill('ng-pill', 'ok', 'ok (' + age + 's)');
+    else setPill('ng-pill', 'warn', 'stale (' + age + 's)');
+  }
+
+  async function refreshPricesNow() {
+    const env = await getJson('/api/prices', 3000);
+    if (!okEnvelope(env)) { setPill('price-pill', 'warn', 'offline'); return; }
+    const d = env.data || {};
+    const cur = d.current || {};
+    setText('spot', fmtNum(cur.sek_per_kwh, 3));
+    const a = d.cache_age_s;
+    if (a === null || a === undefined) setPill('price-pill', 'warn', 'unknown');
+    else setPill('price-pill', a < 7200 ? 'ok' : 'warn', 'age ' + a + 's');
+    setText('tomorrow', d.tomorrow_status || '—');
+  }
+
+  async function refreshRecoNow() {
+    const env = await getJson('/api/recommendations', 3000);
+    if (!okEnvelope(env)) { setPill('reco-pill', 'warn', 'offline'); return; }
+    const d = env.data || {};
+    if (d.error) { setPill('reco-pill', 'warn', 'no data'); return; }
+    setPill('reco-pill', 'ok', 'ok');
+    const body = document.getElementById('reco-body');
+    body.innerHTML = '';
+    const rows = d.appliances || [];
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      const cells = [
+        r.name,
+        (r.recommended_delay_min === null || r.recommended_delay_min === undefined) ? '—' : String(r.recommended_delay_min),
+        r.recommended_start_local || '—',
+        fmtNum(r.avg_price_now_sek_per_kwh, 2),
+        fmtNum(r.avg_price_recommended_sek_per_kwh, 2),
+        fmtNum(r.estimated_saving_sek, 2),
+      ];
+      for (const c of cells) {
+        const td = document.createElement('td');
+        td.textContent = c;
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+  }
+
+  async function refreshWeatherNow() {
+    const env = await getJson('/api/weather_hourly?hours=24', 4500);
+    if (!okEnvelope(env)) { setPill('wx-pill', 'warn', 'offline'); return; }
+    const d = env.data || {};
+    const ok = d.primary && d.primary.ok;
+    setPill('wx-pill', ok ? 'ok' : 'warn', ok ? 'ok' : 'stale');
+    const body = document.getElementById('wx-body');
+    body.innerHTML = '';
+    const series = (d.primary && d.primary.series) ? d.primary.series : [];
+    for (const it of series) {
+      const end = (it.end && it.end.stockholm) ? it.end.stockholm : '—';
+      const v = it.values || {};
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td class="mono"></td><td></td><td></td>';
+      tr.children[0].textContent = end.slice(11, 16);
+      tr.children[1].textContent = fmtNum(v.t_air_c, 1);
+      tr.children[2].textContent = fmtNum(v.wind_mps, 1);
+      body.appendChild(tr);
+    }
+  }
+
+  async function refreshSolarNow() {
+    const env = await getJson('/api/solar_hourly?hours=24', 4500);
+    if (!okEnvelope(env)) { setPill('sol-pill', 'warn', 'offline'); return; }
+    const d = env.data || {};
+    setPill('sol-pill', d.ok ? 'ok' : 'warn', d.ok ? 'ok' : 'stale');
+    const body = document.getElementById('sol-body');
+    body.innerHTML = '';
+    const series = d.series || [];
+    for (const it of series) {
+      const end = (it.end && it.end.stockholm) ? it.end.stockholm : '—';
+      const v = it.values || {};
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td class="mono"></td><td></td><td></td>';
+      tr.children[0].textContent = end.slice(11, 16);
+      tr.children[1].textContent = fmtNum(v.gti_wm2, 0);
+      tr.children[2].textContent = fmtNum(v.cloud_pct, 0);
+      body.appendChild(tr);
+    }
+  }
+
+  async function refreshPvNow() {
+    const env = await getJson('/api/pv_hourly?hours=24', 4500);
+    if (!okEnvelope(env)) { setPill('pv-pill', 'warn', 'offline'); return; }
+    const d = env.data || {};
+    setPill('pv-pill', 'ok', 'ok');
+    const s = d.series || [];
+    let total = 0.0;
+    let nextKw = null;
+    for (let i = 0; i < s.length; i++) {
+      const kwh = s[i].pv_kwh_est_simple;
+      if (kwh !== null && kwh !== undefined) total += Number(kwh) || 0;
+      if (i === 0) nextKw = s[i].pv_kw_est_simple;
+    }
+    setText('pv24', fmtNum(total, 1));
+    setText('pv1', fmtNum(nextKw, 2));
+  }
+
+  refreshStatusNow();
+  refreshPricesNow();
+  refreshRecoNow();
+  refreshPvNow();
+
+  setInterval(() => { if (document.visibilityState === 'visible') refreshStatusNow(); }, 5000);
+  setInterval(() => { if (document.visibilityState === 'visible') refreshPricesNow(); }, 15 * 60 * 1000);
+  setInterval(() => { if (document.visibilityState === 'visible') refreshRecoNow(); }, 15 * 60 * 1000);
+  setInterval(() => { if (document.visibilityState === 'visible') refreshPvNow(); }, 30 * 60 * 1000);
+</script>
+
+</body>
+</html>
+"""
+    return html.encode("utf-8")
+
+
+class WebServer:
+    def __init__(self, host="0.0.0.0", port=80):
+        self._sock = socket.socket()
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind((host, port))
+        self._sock.listen(2)
+        self._sock.settimeout(0.2)
+
+    def close(self):
+        try:
+            self._sock.close()
+        except Exception:
+            pass
+
+    def poll_once(self, handlers):
+        try:
+            cl, _addr = self._sock.accept()
+        except OSError:
+            return
+
+        try:
+            cl.settimeout(1.0)
+            req = cl.recv(1024)
+            if not req:
+                return
+
+            try:
+                line = req.split(b"\r\n", 1)[0].decode("utf-8", "ignore")
+                parts = line.split(" ")
+                method = parts[0]
+                raw_path = parts[1] if len(parts) > 1 else "/"
+            except Exception:
+                method, raw_path = "GET", "/"
+
+            if method != "GET":
+                cl.send(_http_response(404, "text/plain; charset=utf-8", b"Not found"))
+                return
+
+            path, qs = _split_path_query(raw_path)
+            query = _parse_query(qs)
+
+            if path == "/" or path == "" or path.startswith("/?"):
+                cl.send(_http_response(200, "text/html; charset=utf-8", _html_index()))
+                return
+
+            fn = handlers.get(path)
+            if fn is None:
+                cl.send(_http_response(404, "text/plain; charset=utf-8", b"Not found"))
+                return
+
+            payload = fn(query)
+            body = json.dumps(payload).encode("utf-8")
+            cl.send(_http_response(200, "application/json; charset=utf-8", body))
+
+        except Exception:
+            try:
+                cl.send(_http_response(500, "text/plain; charset=utf-8", b"Server error"))
+            except Exception:
+                pass
+        finally:
+            try:
+                cl.close()
+            except Exception:
+                pass
