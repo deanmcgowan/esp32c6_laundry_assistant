@@ -2,10 +2,10 @@
 #
 # OTA updater with:
 # - Manifest-driven file list
-# - SHA-256 integrity checks (MicroPython-safe; no .hexdigest())
+# - Optional SHA-256 integrity checks (can be disabled via secrets ota_verify_sha=false)
 # - Staging directory (/next) then swap to (/app); keep (/app_prev)
 # - Rollback after repeated boot failures
-# - Optional status LED blinking support (WS2812 on GPIO8)
+# - Optional status LED tick hooks
 
 import os
 import json
@@ -18,19 +18,23 @@ import urequests as requests
 try:
     import uhashlib as hashlib  # MicroPython
 except ImportError:
-    import hashlib  # Fallback
-
+    import hashlib  # fallback (unlikely on ESP32)
 
 STATE_PATH = "/state.json"
 CHUNK_SIZE = 1024
 
 _status_led = None
+_verify_sha = True  # default
 
 
 def set_status_led(led):
-    # led is expected to have .tick() method (see status_led.StatusLED)
     global _status_led
     _status_led = led
+
+
+def set_verify_sha(enable):
+    global _verify_sha
+    _verify_sha = bool(enable)
 
 
 def _led_tick():
@@ -38,7 +42,6 @@ def _led_tick():
         if _status_led:
             _status_led.tick()
     except Exception:
-        # Never let LED issues break OTA
         pass
 
 
@@ -153,7 +156,10 @@ def _sha256_stream_to_file(resp, dest_path):
     return ubinascii.hexlify(h.digest()).decode().lower()
 
 
-def _download_with_hash(url, dest_path, expected_sha256, retries=2):
+def _download(url, dest_path, expected_sha256, retries=2):
+    """
+    Download file; if _verify_sha is True and expected_sha256 is non-empty, verify it.
+    """
     expected = (expected_sha256 or "").strip().lower()
     last_err = None
 
@@ -171,12 +177,13 @@ def _download_with_hash(url, dest_path, expected_sha256, retries=2):
                 except Exception:
                     pass
 
-            if expected and got != expected:
-                try:
-                    os.remove(dest_path)
-                except OSError:
-                    pass
-                raise RuntimeError("SHA256 mismatch for %s" % dest_path)
+            if _verify_sha and expected:
+                if got != expected:
+                    try:
+                        os.remove(dest_path)
+                    except OSError:
+                        pass
+                    raise RuntimeError("SHA256 mismatch for %s" % dest_path)
 
             return
 
@@ -251,7 +258,7 @@ def apply_update(manifest):
         url = item["url"]
         sha = item.get("sha256", "")
         dest = "/next/" + rel
-        _download_with_hash(url, dest, sha, retries=2)
+        _download(url, dest, sha, retries=2)
 
     _rmtree("/app_prev")
     try:

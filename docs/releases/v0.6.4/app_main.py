@@ -1,6 +1,7 @@
 import sys
 import time
 import json
+import socket
 import ntptime
 import updater
 
@@ -8,7 +9,12 @@ import updater
 if "/app/lib" not in sys.path:
     sys.path.insert(0, "/app/lib")
 
-from web.server import WebServer  # noqa: E402
+try:
+    from web.server import WebServer  # noqa: E402
+    _WEB_IMPORT_ERROR = None
+except Exception as e:
+    WebServer = None
+    _WEB_IMPORT_ERROR = repr(e)
 from ngenic.ngenic_client import NgenicClient  # noqa: E402
 from spotprice.elprisetjustnu import SpotPriceClient  # noqa: E402
 from scheduler import compute_recommendations  # noqa: E402
@@ -22,7 +28,7 @@ from weather.metno_locationforecast import MetNoLocationForecastClient  # noqa: 
 from pv import build_pv_hourly_series  # noqa: E402
 
 
-APP_VERSION = "0.6.2"
+APP_VERSION = "0.6.4"
 
 # Single-site installation:
 SITE_LAT = 60.04333
@@ -68,6 +74,107 @@ class _NoopNgenicClient:
 
     def refresh_if_due(self, force=False):
         return self.get_cached()
+
+
+def _http_response(status_code, content_type, body_bytes):
+    reason = {
+        200: "OK",
+        404: "Not Found",
+        500: "Internal Server Error",
+    }.get(status_code, "OK")
+    hdr = (
+        "HTTP/1.1 {code} {reason}\r\n"
+        "Content-Type: {ct}\r\n"
+        "Content-Length: {n}\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).format(code=status_code, reason=reason, ct=content_type, n=len(body_bytes))
+    return hdr.encode("utf-8") + body_bytes
+
+
+class _FallbackWebServer:
+    def __init__(self, host="0.0.0.0", port=80, reason=""):
+        self._reason = reason or "fallback server"
+        self._sock = socket.socket()
+        try:
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except Exception:
+            pass
+
+        addr = None
+        try:
+            addr = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)[0][-1]
+        except Exception:
+            addr = (host, port)
+
+        self._sock.bind(addr)
+        self._sock.listen(1)
+        self._sock.settimeout(0.2)
+
+    def close(self):
+        try:
+            self._sock.close()
+        except Exception:
+            pass
+
+    def poll_once(self, handlers):
+        try:
+            cl, _addr = self._sock.accept()
+        except OSError:
+            return
+
+        try:
+            cl.settimeout(1.0)
+            req = cl.recv(512)
+            line = req.split(b"\r\n", 1)[0].decode("utf-8", "ignore") if req else ""
+            parts = line.split(" ")
+            path = parts[1] if len(parts) > 1 else "/"
+
+            if path.startswith("/api/status") and "/api/status" in handlers:
+                payload = handlers["/api/status"]({})
+                body = json.dumps(payload).encode("utf-8")
+                cl.send(_http_response(200, "application/json; charset=utf-8", body))
+                return
+
+            body = (
+                "<html><body><h1>ESP32-C6 Energy Hub</h1>"
+                "<p>Fallback web server active.</p>"
+                "<p class='mono'>%s</p>"
+                "</body></html>" % self._reason
+            ).encode("utf-8")
+            cl.send(_http_response(200, "text/html; charset=utf-8", body))
+        except Exception:
+            try:
+                cl.send(_http_response(500, "text/plain; charset=utf-8", b"Server error"))
+            except Exception:
+                pass
+        finally:
+            try:
+                cl.close()
+            except Exception:
+                pass
+
+
+def _start_server():
+    errors = []
+    if WebServer is not None:
+        try:
+            return WebServer(port=80), 80
+        except Exception as e:
+            errors.append("WebServer(80): " + repr(e))
+            print("WebServer init failed:", repr(e))
+    else:
+        errors.append("web import: " + str(_WEB_IMPORT_ERROR))
+        print("Web server import failed:", _WEB_IMPORT_ERROR)
+
+    for p in (80, 8080):
+        try:
+            reason = "; ".join(errors) if errors else "fallback requested"
+            return _FallbackWebServer(port=p, reason=reason), p
+        except Exception as e:
+            errors.append("Fallback(%d): %r" % (p, e))
+
+    raise RuntimeError("Cannot start HTTP server: " + "; ".join(errors))
 
 
 def load_secrets():
@@ -148,6 +255,7 @@ def _norm_prices(cache, now):
 
 def main():
     ip = None
+    http_port = None
     last_ntp_sync_epoch = None
 
     try:
@@ -161,8 +269,6 @@ def main():
         last_ntp_sync_epoch = int(time.time())
     except Exception as e:
         print("NTP sync failed:", repr(e))
-
-    updater.mark_boot_success()
 
     secrets = {}
     try:
@@ -220,7 +326,15 @@ def main():
     except Exception as e:
         print("MET Norway startup refresh failed:", repr(e))
 
-    srv = WebServer(port=80)
+    srv, http_port = _start_server()
+    print("HTTP server listening on port", http_port)
+    if ip:
+        if int(http_port) == 80:
+            print("Energy Hub UI: http://%s/" % ip)
+        else:
+            print("Energy Hub UI: http://%s:%d/" % (ip, int(http_port)))
+    # Only mark boot successful after core services are initialised.
+    updater.mark_boot_success()
     last_sync_ms = time.ticks_ms()
 
     def api_status(_q):
@@ -228,6 +342,7 @@ def main():
         data = {
             "device_time": pack_time(now),
             "ip": ip,
+            "http_port": http_port,
             "last_ntp_sync": pack_time(last_ntp_sync_epoch) if last_ntp_sync_epoch else None,
             "site": {"lat": SITE_LAT, "lon": SITE_LON},
             "pv": {"kwp": PV_KWP, "tilt_deg": PV_TILT_DEG, "azimuth_deg": PV_AZIMUTH_DEG},
@@ -382,3 +497,4 @@ def main():
 
 
 main()
+

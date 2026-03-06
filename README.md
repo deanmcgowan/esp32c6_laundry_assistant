@@ -87,6 +87,10 @@ Create a file called `/secrets.json` on the device (do not commit your real Wiâ€
 {
   "wifi_ssid": "YOUR_WIFI_NAME",
   "wifi_password": "YOUR_WIFI_PASSWORD",
+  "ngenic_token": "NGENIC_TOKEN",
+  "ngenic_tune_uuid": "NGENIC_TUNE_UUID",
+  "ngenic_grid_node_uuid": "NGENIC_NODE_UUID",
+  "metno_user_agent": "LaundryAssistant/0.6.0 (home; contact: you@example.com)",
   "manifest_url": "https://deanmcgowan.github.io/esp32c6_laundry_assistant/stable/manifest.json",
   "check_updates_on_boot": true
 }

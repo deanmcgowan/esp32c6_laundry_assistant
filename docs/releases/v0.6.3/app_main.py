@@ -22,7 +22,7 @@ from weather.metno_locationforecast import MetNoLocationForecastClient  # noqa: 
 from pv import build_pv_hourly_series  # noqa: E402
 
 
-APP_VERSION = "0.6.2"
+APP_VERSION = "0.6.3"
 
 # Single-site installation:
 SITE_LAT = 60.04333
@@ -162,8 +162,6 @@ def main():
     except Exception as e:
         print("NTP sync failed:", repr(e))
 
-    updater.mark_boot_success()
-
     secrets = {}
     try:
         secrets = load_secrets()
@@ -221,6 +219,8 @@ def main():
         print("MET Norway startup refresh failed:", repr(e))
 
     srv = WebServer(port=80)
+    # Only mark boot successful after core services are initialised.
+    updater.mark_boot_success()
     last_sync_ms = time.ticks_ms()
 
     def api_status(_q):
@@ -382,3 +382,4 @@ def main():
 
 
 main()
+
