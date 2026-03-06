@@ -48,6 +48,34 @@ On boot:
 
 This is releaseâ€‘style OTA: the device installs an explicit version, rather than tracking whatever happens to be on the default branch.
 
+## Whiteware recommendation logic
+
+The whiteware planner uses a 12-hour max delay window and combines:
+
+- spot price cache (`/api/prices`)
+- live import/export from Ngenic (`/api/status`)
+- PV forecast estimate (`/api/pv_hourly`)
+
+Delay options:
+
+- Washing machine: `0, 30, 60, 90, 120, ... , 720` minutes
+- Dishwasher: hourly `0, 60, 120, ... , 720` minutes
+- Dryer: hourly `0, 60, 120, ... , 720` minutes
+
+For each candidate start, the app estimates:
+
+- average spot price during the cycle
+- usable PV energy during the cycle
+- expected grid energy = `max(0, cycle_kWh - usable_pv_kWh)`
+- expected grid cost = `expected grid energy * avg spot price`
+
+The recommendation is the lowest estimated grid-cost window (with a small tie-break penalty for unnecessary delay).
+
+PV handling:
+
+- If currently exporting, the planner prefers self-consuming PV (even if the spot price is temporarily high).
+- If currently importing, forecast PV first offsets the current import baseline; only surplus PV is counted as usable for whiteware.
+
 ## GitHub Pages
 
 GitHub Pages is configured to serve the `docs/` directory, giving a stable HTTPS endpoint the device can poll.
@@ -87,6 +115,7 @@ Create a file called `/secrets.json` on the device (do not commit your real Wiâ€
 {
   "wifi_ssid": "YOUR_WIFI_NAME",
   "wifi_password": "YOUR_WIFI_PASSWORD",
+  "ota_verify_sha": false,
   "ngenic_token": "NGENIC_TOKEN",
   "ngenic_tune_uuid": "NGENIC_TUNE_UUID",
   "ngenic_grid_node_uuid": "NGENIC_NODE_UUID",
@@ -156,3 +185,4 @@ print(ubinascii.hexlify(h.digest()).decode())
 
 - This OTA mechanism updates the application files on the filesystem, not the MicroPython firmware image.
 - On this board: GPIO8 drives the onboard WS2812 LED; GPIO9 is BOOT/strapping.
+
